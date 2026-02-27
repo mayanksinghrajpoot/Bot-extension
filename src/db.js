@@ -20,6 +20,15 @@ export const initDB = async () => {
                     content TEXT,
                     embedding vector(384)
                 );
+                CREATE TABLE IF NOT EXISTS pre_processed_entities (
+                    id SERIAL PRIMARY KEY,
+                    raw_extracted_text TEXT,
+                    embedding vector(384)
+                );
+                CREATE INDEX IF NOT EXISTS scraped_knowledge_embedding_idx 
+                    ON scraped_knowledge USING hnsw (embedding vector_cosine_ops);
+                CREATE INDEX IF NOT EXISTS pre_processed_entities_embedding_idx 
+                    ON pre_processed_entities USING hnsw (embedding vector_cosine_ops);
             `);
       dbInstance = db;
       return db;

@@ -1,6 +1,9 @@
 import { pipeline, env } from '@xenova/transformers';
 
+// Chrome MV3 extensions cannot use blob: URLs for sub-workers.
+// Disable proxy (which creates a blob worker) and force single-threaded WASM.
 env.backends.onnx.wasm.proxy = false;
+env.backends.onnx.wasm.numThreads = 1;
 
 let pipelineInstance = null;
 

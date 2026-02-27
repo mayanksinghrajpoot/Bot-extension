@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local RAG Chat Options</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #0f0f14;
+            color: #f3f4f6;
+            font-family: system-ui, -apple-system, sans-serif;
+            min-height: 100vh;
+            padding: 2.5rem 1rem;
+            display: flex;
+            justify-content: center;
+        }
+
+        .card {
+            max-width: 42rem;
+            width: 100%;
+            background: #16161d;
+            border: 1px solid #1f2937;
+            border-radius: 1rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, .3);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #1f2937;
+        }
+
+        .card-header h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: .75rem;
+        }
+
+        .card-header p {
+            font-size: 13px;
+            color: #9ca3af;
+            margin-top: .5rem;
+        }
+
+        .card-body {
+            padding: 2rem;
+        }
+
+        .section {
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #e5e7eb;
+            margin-bottom: .75rem;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+
+        .radio-card {
+            display: flex;
+            align-items: flex-start;
+            gap: .75rem;
+            padding: 1rem;
+            border-radius: .75rem;
+            border: 1px solid #374151;
+            cursor: pointer;
+            transition: border-color .15s;
+            margin-bottom: .75rem;
+        }
+
+        .radio-card:hover {
+            border-color: #3b82f6;
+        }
+
+        .radio-card.active {
+            background: #1e1e2a;
+            border-color: #374151;
+        }
+
+        .radio-card input {
+            margin-top: 4px;
+        }
+
+        .radio-label {
+            font-weight: 500;
+            color: #fff;
+            font-size: 15px;
+        }
+
+        .radio-desc {
+            font-size: 13px;
+            color: #9ca3af;
+            margin-top: 4px;
+        }
+
+        .webllm-opts {
+            opacity: .5;
+            pointer-events: none;
+            transition: opacity .15s;
+        }
+
+        .webllm-opts.enabled {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        select {
+            width: 100%;
+            background: #1e1e2a;
+            border: 1px solid #374151;
+            border-radius: .5rem;
+            padding: .75rem 1rem;
+            font-size: 14px;
+            color: #fff;
+            outline: none;
+        }
+
+        select:focus {
+            border-color: #3b82f6;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: .5rem;
+            margin-left: 4px;
+        }
+
+        .danger {
+            padding-top: 1.5rem;
+            border-top: 1px solid #1f2937;
+        }
+
+        .danger-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #f87171;
+            margin-bottom: .75rem;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+
+        .danger-btn {
+            padding: .5rem 1rem;
+            background: rgba(127, 29, 29, .3);
+            color: #f87171;
+            border: 1px solid rgba(127, 29, 29, .5);
+            border-radius: .5rem;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background .15s;
+        }
+
+        .danger-btn:hover {
+            background: rgba(127, 29, 29, .5);
+        }
+
+        .card-footer {
+            padding: 1.25rem 2rem;
+            border-top: 1px solid #1f2937;
+            background: #111118;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .save-status {
+            font-size: 13px;
+            color: #34d399;
+            opacity: 0;
+            transition: opacity .3s;
+        }
+
+        .save-btn {
+            padding: .625rem 1.5rem;
+            background: #2563eb;
+            border: none;
+            border-radius: .75rem;
+            font-size: 14px;
+            font-weight: 500;
+            color: #fff;
+            cursor: pointer;
+            transition: background .15s;
+        }
+
+        .save-btn:hover {
+            background: #3b82f6;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="card-header">
+            <h1><span style="font-size:1.5rem">⚙️</span> Extension Settings</h1>
+            <p>Configure how Local RAG Chat answers your questions.</p>
+        </div>
+
+        <div class="card-body">
+            <!-- LLM Provider -->
+            <div class="section">
+                <h3 class="section-title">AI Engine</h3>
+                <label class="radio-card active">
+                    <input type="radio" name="provider" value="auto" checked>
+                    <div>
+                        <div class="radio-label">Auto-detect (Recommended)</div>
+                        <div class="radio-desc">Prefers Chrome Built-in AI (zero-download) if available. Falls back to
+                            WebLLM otherwise.</div>
+                    </div>
+                </label>
+                <label class="radio-card">
+                    <input type="radio" name="provider" value="chrome">
+                    <div>
+                        <div class="radio-label">Chrome Built-in AI (Gemini Nano)</div>
+                        <div class="radio-desc">Requires Chrome 131+ with AI flags enabled. Instant responses, zero
+                            download.</div>
+                    </div>
+                </label>
+                <label class="radio-card">
+                    <input type="radio" name="provider" value="webllm">
+                    <div>
+                        <div class="radio-label">WebLLM (WebGPU)</div>
+                        <div class="radio-desc">Runs open-source models in-browser using your GPU. ~2GB download on
+                            first use.</div>
+                    </div>
+                </label>
+            </div>
+
+            <!-- WebLLM Model Selection -->
+            <div id="webllm-options" class="section webllm-opts">
+                <h3 class="section-title">WebLLM Model Selection</h3>
+                <select id="model-select">
+                    <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi-3.5 Mini (3.8B) - Recommended, Fast</option>
+                    <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 (1B) - Very Fast, Lightweight</option>
+                    <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 (3B) - Good balance</option>
+                    <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen 2.5 (1.5B) - Good for coding tasks</option>
+                </select>
+                <p class="hint">Changes take effect the next time you open the side panel.</p>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="danger">
+                <h3 class="danger-title">Danger Zone</h3>
+                <button id="clear-btn" class="danger-btn">Clear Scraped Knowledge Database</button>
+            </div>
+        </div>
+
+        <div class="card-footer">
+            <span id="save-status" class="save-status">Settings saved!</span>
+            <button id="save-btn" class="save-btn">Save Settings</button>
+        </div>
+    </div>
+    <script src="options.js"></script>
+</body>
+
+</html>
