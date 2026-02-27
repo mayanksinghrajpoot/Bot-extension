@@ -29,6 +29,8 @@ export const initDB = async () => {
                     ON scraped_knowledge USING hnsw (embedding vector_cosine_ops);
                 CREATE INDEX IF NOT EXISTS pre_processed_entities_embedding_idx 
                     ON pre_processed_entities USING hnsw (embedding vector_cosine_ops);
+                CREATE INDEX IF NOT EXISTS scraped_knowledge_content_fts
+                    ON scraped_knowledge USING gin(to_tsvector('english', content));
             `);
       dbInstance = db;
       return db;

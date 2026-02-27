@@ -4,6 +4,12 @@ import { initDB } from './db';
 import { createLLM } from './llm';
 import { buildEagerExtractionPrompt, buildSingleShotPrompt } from './rag-prompt';
 
+// Keys to skip during flattening — they are noise that pollutes embedding quality
+const NOISE_KEYS = new Set([
+    '__typename', 'cursor', 'imageLink', 'avatarUrl', 'avatar', 'profileImage',
+    'id', 'updatedAt', 'createdAt', 'timestamp', 'token', '__ref', 'typename'
+]);
+
 function flattenToText(data) {
     if (typeof data === 'string') {
         try {
@@ -18,7 +24,7 @@ function flattenToText(data) {
     }
     if (typeof data === 'object' && data !== null) {
         return Object.entries(data)
-            .filter(([, v]) => v !== null && v !== undefined)
+            .filter(([k, v]) => v !== null && v !== undefined && !NOISE_KEYS.has(k))
             .map(([k, v]) => {
                 const val = typeof v === 'object' ? flattenToText(v) : String(v);
                 return `${k}: ${val}`;
@@ -106,6 +112,8 @@ export default function ChatApp() {
     const loadingRef = useRef(false);
     const eagerQueueRef = useRef([]);
     const isEagerProcessingRef = useRef(false);
+    // Stable ref to processQueue to avoid stale-closure bugs in chrome listener
+    const processQueueRef = useRef(null);
 
     // Sync loading state to ref for the background loop to check
     const setAppLoading = (val) => {
@@ -161,6 +169,8 @@ export default function ChatApp() {
             const { id, vector, error } = event.data;
             if (id === 'model_ready') {
                 setStatus(prev => ({ ...prev, model: true }));
+                // Clean up the warmup callback entry to prevent a permanent leaked reference
+                delete callbacksRef.current['warmup'];
                 return;
             }
             if (callbacksRef.current[id]) {
@@ -183,7 +193,8 @@ export default function ChatApp() {
                         payload: message.payload,
                         url: message.url
                     });
-                    processQueue();
+                    // Use the ref to avoid stale closure on processQueue
+                    processQueueRef.current?.();
                 }
             };
             chrome.runtime.onMessage.addListener(chromeListener);
@@ -311,13 +322,23 @@ export default function ChatApp() {
             for (const chunk of chunks) {
                 if (chunk.length < 10) continue;
                 try {
+                    // Deduplication: skip if this exact chunk already exists in the DB
+                    const existing = await dbRef.current.query(
+                        'SELECT 1 FROM scraped_knowledge WHERE content = $1 LIMIT 1',
+                        [chunk]
+                    );
+                    if (existing.rows.length > 0) continue;
+
                     const vec = await getEmbedding(chunk);
                     const vecStr = vectorToSql(vec);
                     await dbRef.current.query(
                         'INSERT INTO scraped_knowledge (content, embedding) VALUES ($1, $2::vector)',
                         [chunk, vecStr]
                     );
-                    eagerQueueRef.current.push(chunk); // Queue micro-chunk for eager background extraction
+                    // Cap eager queue to prevent memory bloat on huge pages
+                    if (eagerQueueRef.current.length < 100) {
+                        eagerQueueRef.current.push(chunk);
+                    }
                     setStatus(prev => ({ ...prev, docs: prev.docs + 1 }));
                 } catch (e) { }
             }
@@ -327,9 +348,26 @@ export default function ChatApp() {
         processEagerQueue(); // Attempt to start eager extraction if idle
     }, [getEmbedding, processEagerQueue]);
 
+    // Keep the processQueueRef always pointing to the latest version of processQueue
+    useEffect(() => {
+        processQueueRef.current = processQueue;
+    });
+
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
+
+    const handleClearKnowledge = async () => {
+        if (!db || loading) return;
+        try {
+            await db.query('TRUNCATE scraped_knowledge, pre_processed_entities RESTART IDENTITY');
+            eagerQueueRef.current = [];
+            setStatus(prev => ({ ...prev, docs: 0 }));
+            setMessages(prev => [...prev, { role: 'bot', content: '🗑️ Knowledge cleared. Browse the page to rebuild context.' }]);
+        } catch (e) {
+            console.error('Clear knowledge failed:', e);
+        }
+    };
 
     const handleSend = async () => {
         if (!input.trim() || !db || !llm) return;
@@ -347,7 +385,7 @@ export default function ChatApp() {
             const queryVector = await getEmbedding(queryText);
             const vecStr = vectorToSql(queryVector);
 
-            const countResult = await db.query('SELECT COUNT(*) as cnt FROM scraped_knowledge');
+            const countResult = await dbRef.current.query('SELECT COUNT(*) as cnt FROM scraped_knowledge');
             const totalDocs = parseInt(countResult.rows[0]?.cnt || '0', 10);
 
             if (totalDocs === 0) {
@@ -359,9 +397,9 @@ export default function ChatApp() {
                 return;
             }
 
-            // A: Vector Search (Top 25)
-            const vectorResult = await db.query(
-                'SELECT content, embedding <=> $1::vector AS distance FROM scraped_knowledge ORDER BY distance ASC LIMIT 25',
+            // A: Vector Search (Top 10 — matches exactly how many we consume downstream)
+            const vectorResult = await dbRef.current.query(
+                'SELECT content, embedding <=> $1::vector AS distance FROM scraped_knowledge ORDER BY distance ASC LIMIT 10',
                 [vecStr]
             );
 
@@ -372,11 +410,10 @@ export default function ChatApp() {
 
             if (keywords.length > 0) {
                 try {
-                    // Create an ILIKE condition for each keyword
                     const conditions = keywords.map((_, i) => `content ILIKE $${i + 1}`).join(' OR ');
                     const params = keywords.map(k => `%${k}%`);
-                    keywordResult = await db.query(
-                        `SELECT content, 0 AS distance FROM scraped_knowledge WHERE ${conditions} LIMIT 15`,
+                    keywordResult = await dbRef.current.query(
+                        `SELECT content, 0 AS distance FROM scraped_knowledge WHERE ${conditions} LIMIT 10`,
                         params
                     );
                 } catch (e) { console.error("Keyword search err:", e); }
@@ -385,7 +422,7 @@ export default function ChatApp() {
             // C: Eager Extracted Entities (Prioritized)
             let eagerResult = { rows: [] };
             try {
-                eagerResult = await db.query(
+                eagerResult = await dbRef.current.query(
                     'SELECT raw_extracted_text as content, embedding <=> $1::vector AS distance FROM pre_processed_entities ORDER BY distance ASC LIMIT 5',
                     [vecStr]
                 );
@@ -577,6 +614,16 @@ export default function ChatApp() {
                         disabled={!db || loading || !input.trim() || !llm}
                     >
                         Send
+                    </button>
+                </div>
+                <div className="mt-2 flex justify-end">
+                    <button
+                        onClick={handleClearKnowledge}
+                        disabled={!db || loading}
+                        className="text-[11px] text-gray-600 hover:text-red-400 disabled:opacity-30 transition-colors"
+                        title="Clear all scraped knowledge from the database"
+                    >
+                        🗑️ Clear Knowledge ({status.docs} chunks)
                     </button>
                 </div>
             </div>
