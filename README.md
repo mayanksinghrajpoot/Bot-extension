@@ -1,16 +1,185 @@
-# React + Vite
+# 🧠 Local RAG Chat
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A **Chrome Extension** that silently reads the current webpage's API responses, generates semantic vector embeddings locally in your browser, and lets you ask questions about the page — all 100% private, zero servers, zero uploads.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## ✨ Features
 
-## React Compiler
+- **Zero-server privacy** — All data lives in your browser. Nothing leaves your device.
+- **Passive API Interception** — Automatically intercepts network API responses as you browse, without disturbing the page.
+- **Semantic Hybrid Search** — Combines dense vector similarity search (`pgvector` + HNSW index) with keyword fallback (`GIN` full-text index) for accurate context retrieval.
+- **Semantic Micro-Chunking** — Stores data as small, semantically complete micro-chunks. JSON API arrays are preserved as whole objects; raw text is split on sentence boundaries.
+- **O(1) Single-Pass Inference** — Instead of looping the LLM over every page section (Map-Reduce), retrieves the Top 10 most relevant chunks and prompts the LLM exactly once per query.
+- **Background Eager Extraction** — Proactively pre-processes page context in the background so answers are faster when you need them.
+- **Content Deduplication** — Skips re-inserting duplicate chunks from repeated API calls.
+- **Clear Knowledge** — One-click wipes the DB when you navigate to a different domain.
+- **Streaming Responses** — Token-by-token streaming output directly in the sidebar.
+- **Supports Chrome AI & WebLLM** — Automatically detects and uses the best available local LLM backend.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## 🏗️ Architecture
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```
+Browser Tab
+  │
+  ├── content.js (MAIN world)        — Intercepts XHR / fetch API calls
+  ├── bridge.js  (ISOLATED world)    — Forwards intercepted data to background
+  └── background.js                  — Service worker; routes messages to sidebar
+
+Sidebar (React + Vite)
+  │
+  ├── worker.js                      — Embedding Web Worker (Xenova/all-MiniLM-L6-v2 via ONNX/WebGPU)
+  ├── llm-worker.js                  — LLM Web Worker (WebLLM / Phi-3.5-mini via WebGPU)
+  ├── llm.js                         — LLM provider abstraction (Chrome AI or WebLLM)
+  ├── db.js                          — PGlite (Postgres in WASM) with pgvector + HNSW + GIN indexes
+  └── ChatApp.jsx                    — Main UI: Ingestion → Chunking → Search → Synthesis
+```
+
+### Data Flow
+```
+API Response received
+  → Semantic Chunking (JSON objects preserved whole; text split by sentence)
+  → Dedup check (skip if chunk already stored)
+  → Embedding (all-MiniLM-L6-v2, 384-dim)
+  → PGlite INSERT (scraped_knowledge table)
+  → Background Eager Extraction (pre_processed_entities table)
+
+User Question
+  → Embedding (384-dim query vector)
+  → Hybrid Retrieval:
+      A. HNSW Vector Search  → Top 10 semantic matches
+      B. GIN Keyword Search   → Top 10 exact matches
+      C. Eager Entity Search  → Top 5 pre-processed matches
+  → Merge & Deduplicate
+  → Single-Shot LLM Synthesis (one prompt, one response)
+  → Streaming output to sidebar
+```
+
+---
+
+## 🔧 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Extension Framework | Chrome Manifest V3 |
+| Frontend | React 18 + Vite 7 |
+| Styling | Tailwind CSS |
+| Database | PGlite (PostgreSQL WASM) |
+| Vector Search | `pgvector` with HNSW index |
+| Keyword Search | PostgreSQL GIN full-text index |
+| Embeddings | `@xenova/transformers` → `all-MiniLM-L6-v2` (384-dim) |
+| LLM | `@mlc-ai/web-llm` → `Phi-3.5-mini-instruct` (WebGPU) |
+| LLM Fallback | Chrome Built-in AI (`window.ai`) |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Node.js** v18+ and npm
+- **Google Chrome** (version 127+ for WebGPU support)
+- A GPU with WebGPU support recommended (CPU/WASM fallback works but is slower)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone <repo-url>
+cd local-rag-chat
+
+# Install dependencies
+npm install
+
+# Build the extension
+npm run build
+```
+
+### Loading in Chrome
+
+1. Open Chrome and navigate to `chrome://extensions`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **Load unpacked**
+4. Select the `dist/` folder generated by the build
+5. Click the extension icon in the toolbar to open the sidebar
+
+### Development
+
+```bash
+npm run dev   # Hot-reloading dev server (for UI development)
+npm run build # Production build for Chrome loading
+```
+
+---
+
+## ⚙️ Options
+
+Click the **Options** page from `chrome://extensions` to configure:
+
+- **LLM Provider**: `auto` (default), `webllm`, or `chrome-ai`
+- **WebLLM Model**: Choose a specific model (default: `Phi-3.5-mini-instruct-q4f16_1-MLC`)
+
+> **Note:** On first load, WebLLM will download the model weights (~2GB). This is a one-time download cached in your browser.
+
+---
+
+## 🗄️ Database Schema
+
+```sql
+-- Semantic micro-chunks from intercepted API responses
+CREATE TABLE scraped_knowledge (
+    id        SERIAL PRIMARY KEY,
+    content   TEXT,
+    embedding vector(384)
+);
+CREATE INDEX ON scraped_knowledge USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX ON scraped_knowledge USING gin(to_tsvector('english', content));
+
+-- Pre-processed entities extracted in the background
+CREATE TABLE pre_processed_entities (
+    id                 SERIAL PRIMARY KEY,
+    raw_extracted_text TEXT,
+    embedding          vector(384)
+);
+CREATE INDEX ON pre_processed_entities USING hnsw (embedding vector_cosine_ops);
+```
+
+---
+
+## 🔒 Privacy
+
+- **No external requests** — All inference runs on-device via WebGPU.
+- **No telemetry** — The extension never phones home.
+- **Stored in browser only** — PGlite persists data to the browser's Origin Private File System (OPFS).
+- **You control the data** — Use the **🗑️ Clear Knowledge** button in the sidebar to wipe all stored context at any time.
+
+---
+
+## 📁 Project Structure
+
+```
+local-rag-chat/
+├── public/
+│   ├── manifest.json      # Chrome Extension manifest (MV3)
+│   ├── background.js      # Service worker
+│   ├── content.js         # API interceptor (MAIN world)
+│   ├── bridge.js          # Message bridge (ISOLATED world)
+│   └── options.html/js    # Extension settings page
+├── src/
+│   ├── main.jsx           # React entry point
+│   ├── ChatApp.jsx        # Core sidebar UI & RAG pipeline
+│   ├── db.js              # PGlite database init & schema
+│   ├── llm.js             # LLM provider abstraction
+│   ├── llm-worker.js      # WebLLM Web Worker
+│   ├── worker.js          # Embedding Web Worker
+│   └── rag-prompt.js      # LLM prompt templates
+├── index.html             # Sidepanel HTML entry
+└── vite.config.js         # Vite build config
+```
+
+---
+
+## 📜 License
+
+MIT
