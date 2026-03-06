@@ -476,8 +476,20 @@ export default function ChatApp() {
             loadingRef.current = true;
 
             const streamId = Date.now();
+
+            // Sort by relevance (ascending distance = most relevant first)
+            // Keyword matches have distance=0 so they naturally float to the top.
+            // This ensures the budget is spent on the best context, not arbitrary merge order.
+            const sortedRows = [...mergedRows].sort((a, b) =>
+                (parseFloat(a.distance) || 0) - (parseFloat(b.distance) || 0)
+            );
+
+            // Filter noise: skip trivially short chunks (e.g. "status: true" at 14 chars)
+            // that waste budget slots without providing meaningful context.
+            const meaningfulRows = sortedRows.filter(r => flattenToText(r.content).length > 30);
+
             // Pre-compute flattened text once per row to avoid triple re-computation
-            const flatRows = mergedRows.map(r => flattenToText(r.content));
+            const flatRows = meaningfulRows.map(r => flattenToText(r.content));
             setMessages(prev => [...prev, {
                 id: streamId,
                 role: 'bot',
@@ -486,7 +498,19 @@ export default function ChatApp() {
             }]);
 
             // Combine the retrieved micro-chunks into a single block of raw data (pre-computed)
-            const combinedExtraction = flatRows
+            // Hard budget: 8,000 chars ≈ 2,285 tokens for context.
+            // Math: 4096 window - 1024 max_tokens output = 3,072 input tokens available.
+            // Minus system prompt (~257t) and query (~50t) = 2,765t for context ≈ 9,677 chars.
+            // Using 8,000 gives ~600t safety buffer while maximising response quality.
+            const CONTEXT_CHAR_BUDGET = 8000;
+            let budgetLeft = CONTEXT_CHAR_BUDGET;
+            const safeRows = [];
+            for (const txt of flatRows) {
+                if (budgetLeft <= 0) break;
+                safeRows.push(txt.slice(0, budgetLeft));
+                budgetLeft -= txt.length;
+            }
+            const combinedExtraction = safeRows
                 .map((txt, i) => `[Context ${i + 1}]:\n${txt}`)
                 .join('\n\n');
 

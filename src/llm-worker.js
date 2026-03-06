@@ -13,9 +13,10 @@ self.onmessage = async (e) => {
                     self.postMessage({ id, type: 'PROGRESS', progress });
                 },
                 chatOpts: {
-                    // Enable sliding window so very long prompts degrade gracefully
-                    // instead of crashing with an overflow error
-                    sliding_window_size: 3072,
+                    // Explicitly set a larger context window to prevent overflow
+                    context_window_size: 8192,
+                    // Sliding window as safety net for any edge-case overflow
+                    sliding_window_size: 6144,
                 }
             });
             self.postMessage({ id, type: 'READY' });
@@ -32,7 +33,7 @@ self.onmessage = async (e) => {
                 messages,
                 stream: true,
                 temperature: 0.3,
-                max_tokens: 2048  // Increased limit for list-heavy answers
+                max_tokens: 1024  // Keeps output budget to 1024 tokens, leaving 3072 tokens for input on the 4096 window
             });
 
             for await (const chunk of chunks) {

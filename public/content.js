@@ -30,10 +30,23 @@
 
     function extractTextFromHTML(html) {
         try {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            doc.querySelectorAll('script, style, noscript, svg, iframe').forEach(el => el.remove());
-            const text = doc.body?.innerText || doc.body?.textContent || '';
+            if (typeof html !== 'string') return '';
+
+            // 1. Remove tags that contain non-readable or structural content
+            let text = html.replace(/<(script|style|noscript|svg|iframe)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+
+            // 2. Remove all remaining open/close/self-closing HTML tags
+            text = text.replace(/<[^>]+>/g, ' ');
+
+            // 3. Decode common HTML entities
+            text = text.replace(/&nbsp;/gi, ' ')
+                .replace(/&amp;/gi, '&')
+                .replace(/&lt;/gi, '<')
+                .replace(/&gt;/gi, '>')
+                .replace(/&quot;/gi, '"')
+                .replace(/&#39;|&#x27;/gi, "'");
+
+            // 4. Clean up structural whitespace
             return text.replace(/\s+/g, ' ').trim();
         } catch (e) {
             return '';

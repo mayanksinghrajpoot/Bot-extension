@@ -180,6 +180,3 @@ local-rag-chat/
 
 ---
 
-## 📜 License
-
-MIT
